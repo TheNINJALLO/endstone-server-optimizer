@@ -20,8 +20,9 @@
 </p>
 
 <p align="center">
-  <a href="#overview">Overview</a> &bull;
-  <a href="#compatibility">Compatibility</a> &bull;
+  <a href="#what-it-does">What it does</a> &bull;
+  <a href="#how-to-use">How to use</a> &bull;
+  <a href="#commands-and-permissions">Commands</a> &bull;
   <a href="#install">Install</a> &bull;
   <a href="https://github.com/TheNINJALLO/endstone-server-optimizer/releases">Releases</a>
 </p>
@@ -30,11 +31,29 @@
 
 Server optimization plugin for Endstone Minecraft Bedrock. This release is aligned with Endstone 0.11.8 and Minecraft Bedrock Dedicated Server 1.26.40, and is distributed as a Python wheel for direct installation in an Endstone server.
 
-## Capabilities
+## What it does
 
-- Automatic entity cleanup and server maintenance
-- Operational controls for reducing avoidable load
-- Self-contained source and wheel release workflow
+- Monitors TPS and lag indicators and applies configurable cleanup and load-reduction actions.
+- Controls entity cleanup, packet-related optimizations, player view distance, and automatic thresholds.
+- Provides read-only status commands for players and guarded configuration commands for operators.
+
+## How to use
+
+1. Start once, back up the generated configuration, and review every cleanup whitelist before enabling aggressive actions.
+2. Use `/tps`, `/lag`, and `/optimize status` to establish a baseline under normal load.
+3. Tune view distance and TPS thresholds gradually, then verify gameplay before enabling full or packet optimizations.
+4. Use `/soconfig save` after validated changes and `/soconfig reload` after manual edits.
+
+## Commands and permissions
+
+| Command / usage | What it does | Access |
+|---|---|---|
+| `/optimize`<br>`/optimize (status\|full\|packets)[action: OptAction]`<br>`/optimize view <player: player>`<br><sub>Aliases: `/opt`, `/perf`</sub> | Server optimization controls | `serveropt.command.optimize` |
+| `/tps` | Check server TPS | `serveropt.command.tps` |
+| `/lag` | View lag information | `serveropt.command.lag` |
+| `/viewdistance`<br>`/viewdistance <distance: int>`<br>`/viewdistance auto`<br><sub>Aliases: `/vd`</sub> | Manage view distance | `serveropt.command.viewdistance` |
+| `/tpsthreshold`<br>`/tpsthreshold (critical\|warning\|target)<type: TpsType> <value: float>`<br><sub>Aliases: `/tpst`</sub> | Adjust TPS thresholds for optimization triggers | `serveropt.command.tpsthreshold` |
+| `/soconfig`<br>`/soconfig (reload\|reset\|save)[action: ConfigAction]`<br>`/soconfig set <key: str> <value: str>`<br>`/soconfig whitelist`<br>`/soconfig whitelist <action: str> <entity_type: str>`<br><sub>Aliases: `/soc`</sub> | Manage plugin configuration | `serveropt.command.config` |
 
 ## Compatibility
 
