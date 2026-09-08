@@ -2,6 +2,7 @@ import time
 import gc
 import json
 import os
+import tempfile
 from pathlib import Path
 from collections import defaultdict, deque
 from typing import Dict, List, Set, Optional, Any
@@ -20,11 +21,12 @@ from endstone.event import (
 from endstone.plugin import Plugin
 from endstone import Player
 
-# Bedrock protocol packet IDs for throttling
-# LevelSoundEventPacket = 0x7B, SpawnParticleEffectPacket = 0x76
+# Bedrock protocol packet IDs used only for optional sound/particle throttling.
+# View distance is never changed with synthetic packets: BDS owns the chunk
+# publisher state and a standalone ChunkRadiusUpdated packet can disconnect
+# clients when it disagrees with that state.
 PACKET_ID_LEVEL_SOUND = 0x7B
 PACKET_ID_SPAWN_PARTICLE = 0x76
-PACKET_ID_CHUNK_RADIUS_UPDATED = 0x46
 
 try:
     from bedrock_protocol_packets import UpdateBlockPacket
@@ -128,7 +130,10 @@ class ServerOptimizerPlugin(Plugin):
             "tps_target": 19.0,
             "tps_warning": 16.0,
             "tps_critical": 13.0,
-            "auto_view_distance": True,
+            # Runtime view-distance packets are unsafe because they do not update
+            # BDS's authoritative chunk publisher. Kept for config compatibility,
+            # but always migrated to false and never enabled at runtime.
+            "auto_view_distance": False,
             "base_view_distance": 12,
             "min_view_distance": 6,
             "max_view_distance": 32,
@@ -206,7 +211,7 @@ class ServerOptimizerPlugin(Plugin):
         self.load_config()
 
     def on_enable(self) -> None:
-        self.logger.info("=== Server Optimizer v2.2.1 Enabled (API 0.11) ===")
+        self.logger.info("=== Server Optimizer v2.2.4 Enabled (API 0.11) ===")
         
         # Register event listeners
         self.register_events(self)
@@ -238,11 +243,6 @@ class ServerOptimizerPlugin(Plugin):
         # AFK detection (runs every 30 seconds)
         self.server.scheduler.run_task(
             self, safe_task(self.detect_afk_players), delay=300, period=600
-        )
-        
-        # View distance adjuster (runs every 15 seconds)
-        self.server.scheduler.run_task(
-            self, safe_task(self.adjust_view_distance), delay=300, period=300
         )
         
         # Memory cleanup (runs every 5 minutes)
@@ -366,27 +366,41 @@ class ServerOptimizerPlugin(Plugin):
             return False
 
         if len(args) == 0:
-            sender.send_message(f"§e[View Distance] Current: §f{self.current_view_distance} chunks")
-            sender.send_message(f"§7Auto Adjust: {'§aON' if self.auto_view_distance else '§cOFF'}")
-            sender.send_message(f"§7Limits: §f{self.min_view_distance} - {self.max_view_distance} chunks (Max allowed: 32)")
+            configured = self.read_server_view_distance()
+            if configured is None:
+                sender.send_message("§e[View Distance] §7Could not locate server.properties")
+            else:
+                self.current_view_distance = configured
+                sender.send_message(f"§e[View Distance] server.properties: §f{configured} chunks")
+            sender.send_message("§7Runtime packet adjustment: §cDISABLED (connection safety)")
+            sender.send_message("§7Use /viewdistance <5-32>, then restart the server.")
             return True
 
         if args[0].lower() == "auto":
-            self.auto_view_distance = not self.auto_view_distance
-            status = "ON" if self.auto_view_distance else "OFF"
-            sender.send_message(f"§a✓ Auto View Distance set to: {status}")
+            self.auto_view_distance = False
+            self.save_config()
+            sender.send_message("§eAuto view distance remains disabled for connection safety.")
+            sender.send_message("§7Use /viewdistance <5-32> to update server.properties, then restart.")
             return True
 
         try:
             vd = int(args[0])
-            if vd < 2 or vd > 32:
-                sender.send_error_message("§cView distance must be between 2 and 32 chunks!")
+            if vd < 5 or vd > 32:
+                sender.send_error_message("§cView distance must be between 5 and 32 chunks!")
                 return False
-            
+
+            updated, detail = self.write_server_view_distance(vd)
+            if not updated:
+                sender.send_error_message(f"§cCould not update view distance: {detail}")
+                sender.send_message("§7Set view-distance manually in server.properties and restart.")
+                return False
+
             self.current_view_distance = vd
+            self.base_view_distance = vd
             self.auto_view_distance = False
-            self.send_view_distance_to_all(vd)
-            sender.send_message(f"§a✓ Set view distance to {vd} chunks (sent to all players)")
+            self.save_config()
+            sender.send_message(f"§a✓ Set server.properties view-distance to {vd} chunks.")
+            sender.send_message("§eRestart the server to apply it safely; connected players were not modified.")
             
         except ValueError:
             sender.send_error_message("§cPlease enter a valid number!")
@@ -480,12 +494,24 @@ class ServerOptimizerPlugin(Plugin):
                             merged_config[key] = value
                 
                 self.apply_config(merged_config)
+                if loaded_config.get("auto_view_distance") is True:
+                    # Persist the safety migration so an older config cannot keep
+                    # requesting the removed packet-based behavior on each boot.
+                    self.save_config()
+                    self.logger.warning(
+                        "Migrated auto_view_distance to false: runtime radius packets "
+                        "can disconnect players and are no longer sent."
+                    )
                 self.logger.info(f"Configuration loaded from {self.config_path}")
             else:
                 # Create default config file
                 self.save_config()
                 self.logger.info(f"Created default configuration at {self.config_path}")
             
+            configured_view_distance = self.read_server_view_distance()
+            if configured_view_distance is not None:
+                self.current_view_distance = configured_view_distance
+
             return True
             
         except Exception as e:
@@ -519,7 +545,9 @@ class ServerOptimizerPlugin(Plugin):
         self.tps_target = config.get("tps_target", self.default_config["tps_target"])
         self.tps_warning = config.get("tps_warning", self.default_config["tps_warning"])
         self.tps_critical = config.get("tps_critical", self.default_config["tps_critical"])
-        self.auto_view_distance = config.get("auto_view_distance", self.default_config["auto_view_distance"])
+        # Retain the legacy key in saved configs, but never activate unsafe
+        # packet-based runtime view-distance changes.
+        self.auto_view_distance = False
         self.base_view_distance = config.get("base_view_distance", self.default_config["base_view_distance"])
         self.min_view_distance = config.get("min_view_distance", self.default_config["min_view_distance"])
         self.max_view_distance = config.get("max_view_distance", self.default_config["max_view_distance"])
@@ -540,7 +568,7 @@ class ServerOptimizerPlugin(Plugin):
         if isinstance(whitelist, list):
             self.entity_whitelist = [str(e).lower() for e in whitelist]
         
-        # Update current view distance to base if needed
+        # Display fallback only; this value is never sent to a client.
         self.current_view_distance = self.base_view_distance
     
     def get_config_dict(self) -> Dict[str, Any]:
@@ -618,7 +646,14 @@ class ServerOptimizerPlugin(Plugin):
             value_str = args[2]
             
             # Boolean settings
-            if key in ["auto_optimize", "auto_view_distance"]:
+            if key == "auto_view_distance":
+                self.auto_view_distance = False
+                self.save_config()
+                sender.send_message("§eauto_view_distance remains false for connection safety.")
+                sender.send_message("§7Use /viewdistance <5-32>, then restart the server.")
+                return True
+
+            if key == "auto_optimize":
                 value = value_str.lower() in ["true", "1", "yes", "on"]
                 setattr(self, key, value)
                 self.save_config()
@@ -775,7 +810,11 @@ class ServerOptimizerPlugin(Plugin):
         sender.send_message(f"§eTPS: {color}{tps:.2f}§e/20.0 §8| §eMSPT: §f{mspt:.1f}ms")
         sender.send_message(f"§eHealth: {self.get_health_color()}{self.health_score}§e/100")
         sender.send_message(f"§ePlayers: §f{online} §8| §eAFK: §f{len(self.afk_players)}")
-        sender.send_message(f"§eView Distance: §f{self.current_view_distance}")
+        configured_view_distance = self.read_server_view_distance()
+        if configured_view_distance is not None:
+            sender.send_message(f"§eView Distance (server.properties): §f{configured_view_distance}")
+        else:
+            sender.send_message("§eView Distance: §7server.properties unavailable")
         
         # Per-dimension chunk counts
         try:
@@ -849,59 +888,110 @@ class ServerOptimizerPlugin(Plugin):
         except Exception as e:
             self.logger.error(f"AFK detection error: {e}")
 
-    @staticmethod
-    def _encode_varint(value: int) -> bytes:
-        """Encode an integer as a standard Bedrock VarInt (unsigned)."""
-        result = bytearray()
-        val = max(0, value)
-        while val > 0x7F:
-            result.append((val & 0x7F) | 0x80)
-            val >>= 7
-        result.append(val & 0x7F)
-        return bytes(result)
+    def get_server_properties_path(self) -> Optional[Path]:
+        """Locate the BDS server.properties file without creating a new one."""
+        candidates = [Path.cwd() / "server.properties"]
 
-    def send_view_distance_to_player(self, player: Player, chunk_radius: int) -> bool:
-        """Send ChunkRadiusUpdatedPacket (0x46) to a single player."""
         try:
-            payload = self._encode_varint(chunk_radius)
-            player.send_packet(PACKET_ID_CHUNK_RADIUS_UPDATED, payload)
-            return True
-        except Exception as e:
-            self.logger.debug(f"Failed to send ChunkRadiusUpdated to {player.name}: {e}")
-            return False
+            config_dir = self.config_path.parent if self.config_path else Path(self.data_folder)
+            for parent in (config_dir, *config_dir.parents):
+                if parent.name.lower() == "plugins":
+                    candidates.append(parent.parent / "server.properties")
+                    break
+        except Exception:
+            pass
 
-    def send_view_distance_to_all(self, chunk_radius: int) -> None:
-        """Send ChunkRadiusUpdatedPacket (0x46) to all online players."""
-        payload = self._encode_varint(chunk_radius)
-        sent = 0
-        for player in self.server.online_players:
+        seen: Set[Path] = set()
+        for candidate in candidates:
             try:
-                player.send_packet(PACKET_ID_CHUNK_RADIUS_UPDATED, payload)
-                sent += 1
-            except Exception:
-                pass
-        if sent > 0:
-            self.logger.info(f"Sent ChunkRadiusUpdated (radius={chunk_radius}) to {sent} players")
+                resolved = candidate.resolve(strict=False)
+                if resolved in seen:
+                    continue
+                seen.add(resolved)
+                if candidate.is_file() and not candidate.is_symlink():
+                    return candidate
+            except OSError:
+                continue
+        return None
 
-    def adjust_view_distance(self) -> None:
-        if not self.auto_view_distance:
-            return
-        
-        tps = self.calculate_tps()
-        target_vd = self.current_view_distance
-        
-        if tps >= 18.5 and self.current_view_distance < self.max_view_distance:
-            target_vd = min(self.max_view_distance, self.current_view_distance + 1)
-        elif tps < 15.0 and self.current_view_distance > self.min_view_distance:
-            target_vd = max(self.min_view_distance, self.current_view_distance - 1)
-        elif tps < self.tps_critical:
-            target_vd = self.min_view_distance
-        
-        if target_vd != self.current_view_distance:
-            old_vd = self.current_view_distance
-            self.current_view_distance = target_vd
-            self.send_view_distance_to_all(target_vd)
-            self.logger.info(f"Adjusted view distance {old_vd} -> {target_vd} (TPS: {tps:.2f})")
+    def read_server_view_distance(self) -> Optional[int]:
+        """Read the authoritative configured view distance from server.properties."""
+        properties_path = self.get_server_properties_path()
+        if properties_path is None:
+            return None
+
+        try:
+            for line in properties_path.read_text(encoding="utf-8").splitlines():
+                stripped = line.strip()
+                if not stripped or stripped.startswith("#") or "=" not in stripped:
+                    continue
+                key, value = stripped.split("=", 1)
+                if key.strip().lower() == "view-distance":
+                    distance = int(value.strip())
+                    return distance if distance >= 5 else None
+        except (OSError, UnicodeError, ValueError):
+            return None
+        return None
+
+    def write_server_view_distance(self, chunk_radius: int) -> tuple[bool, str]:
+        """Atomically update server.properties; BDS applies it on restart."""
+        if chunk_radius < 5 or chunk_radius > 32:
+            return False, "view distance must be between 5 and 32"
+
+        properties_path = self.get_server_properties_path()
+        if properties_path is None:
+            return False, "server.properties was not found"
+        if properties_path.is_symlink():
+            return False, "refusing to replace a symbolic link"
+
+        temp_path: Optional[Path] = None
+        try:
+            # Disable universal-newline conversion so an existing Windows-style
+            # properties file keeps its original line endings.
+            with properties_path.open("r", encoding="utf-8", newline="") as properties_file:
+                original = properties_file.read()
+            newline = "\r\n" if "\r\n" in original else "\n"
+            had_final_newline = original.endswith(("\n", "\r"))
+            output: List[str] = []
+            replaced = False
+
+            for line in original.splitlines():
+                stripped = line.strip()
+                if not stripped.startswith("#") and "=" in stripped:
+                    key, _ = stripped.split("=", 1)
+                    if key.strip().lower() == "view-distance":
+                        output.append(f"view-distance={chunk_radius}")
+                        replaced = True
+                        continue
+                output.append(line)
+
+            if not replaced:
+                output.append(f"view-distance={chunk_radius}")
+
+            updated = newline.join(output)
+            if had_final_newline or not original:
+                updated += newline
+
+            temp_fd, temp_name = tempfile.mkstemp(
+                prefix=f".{properties_path.name}.", suffix=".tmp", dir=properties_path.parent
+            )
+            os.close(temp_fd)
+            temp_path = Path(temp_name)
+            temp_path.write_text(updated, encoding="utf-8", newline="")
+            try:
+                os.chmod(temp_path, properties_path.stat().st_mode)
+            except OSError:
+                pass
+            os.replace(temp_path, properties_path)
+            return True, str(properties_path)
+        except (OSError, UnicodeError) as exc:
+            return False, str(exc)
+        finally:
+            try:
+                if temp_path is not None and temp_path.exists():
+                    temp_path.unlink()
+            except OSError:
+                pass
 
 
     def periodic_memory_cleanup(self) -> None:
@@ -1426,10 +1516,6 @@ class ServerOptimizerPlugin(Plugin):
         try:
             self.logger.warning("=== EMERGENCY CRASH RECOVERY ACTIVATED ===")
             
-            # Drop view distance to minimum
-            old_vd = self.current_view_distance
-            self.current_view_distance = self.min_view_distance
-            
             # Activate aggressive mode
             self.aggressive_mode = True
             
@@ -1440,13 +1526,12 @@ class ServerOptimizerPlugin(Plugin):
             
             for player in self.server.online_players:
                 if player.is_op or player.has_permission("serveropt.admin"):
-                    player.send_message("§c§l[EMERGENCY] §cEmergency optimization activated! View distance lowered.")
+                    player.send_message("§c§l[EMERGENCY] §cEmergency cleanup activated; view distance was left unchanged.")
             
             self.logger.warning("=== EMERGENCY RECOVERY COMPLETE. Restoration scheduled. ===")
             
             # Schedule restoration to normal settings after 5 minutes (6000 ticks)
             def restore_normal():
-                self.current_view_distance = self.base_view_distance
                 self.aggressive_mode = False
                 self.logger.info("Normal optimization settings restored.")
             
@@ -1464,7 +1549,7 @@ class ServerOptimizerPlugin(Plugin):
             color = self.get_tps_color(tps)
             online = len(self.server.online_players)
             
-            display_text = f"§e§l[OPT] {color}TPS: {tps:.1f}§r/20.0 §ePlayers: {online} §eVD: {self.current_view_distance}"
+            display_text = f"§e§l[OPT] {color}TPS: {tps:.1f}§r/20.0 §ePlayers: {online}"
             
             # Iterate over a copy of the set to allow modification if a player is missing
             for player_name in list(self.performance_viewers):
@@ -1490,12 +1575,6 @@ class ServerOptimizerPlugin(Plugin):
         # Initialize AFK tracking
         self.player_last_move[player.name] = time.time()
         
-        # Sync view distance to the joining player after connection stabilizes
-        def sync_view_distance():
-            self.send_view_distance_to_player(player, self.current_view_distance)
-            
-        self.server.scheduler.run_task(self, sync_view_distance, delay=20)
-        
         # Check if they are OP or have admin permission
         if player.is_op or player.has_permission("serveropt.admin"):
             def send_info():
@@ -1503,7 +1582,7 @@ class ServerOptimizerPlugin(Plugin):
                     tps = self.calculate_tps()
                     mspt = self.get_mspt()
                     color = self.get_tps_color(tps)
-                    player.send_message("§e§l[Server Optimizer v2.2.1]")
+                    player.send_message("§e§l[Server Optimizer v2.2.4]")
                     player.send_message(f"§7TPS: {color}{tps:.2f}§7/20.0 §8| §7MSPT: §f{mspt:.1f}ms")
                     chunks = self.get_total_loaded_chunks()
                     player.send_message(f"§7Chunks: §f{chunks} §8| §7Packet Throttle: {'§aON' if self.packet_throttle_enabled else '§cOFF'}")

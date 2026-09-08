@@ -15,14 +15,9 @@ The plugin watches how fast your server is running. A healthy server runs at **2
 
 ---
 
-## 👁️ Smart View Distance
+## 👁️ Safe View Distance Configuration
 
-View distance is how far you can see in the game. The plugin makes it bigger or smaller based on how the server is doing:
-
-- **Server running great (19.5+ TPS)?** → You can see farther! 🔭
-- **Server getting really slow (below 15 TPS)?** → See a bit less, but no lag!
-
-This happens automatically and only adjusts during real performance issues, not normal gameplay.
+View distance is how far you can see in the game. Use `/viewdistance <5-32>` to update the existing `server.properties` value, then restart the server to apply it. The plugin never changes a connected or joining player's radius with packets, even when an older configuration contains `auto_view_distance: true`.
 
 ---
 
@@ -73,7 +68,7 @@ Every 5 minutes, the plugin cleans up the server's memory (like clearing your co
 
 If the server gets really slow (below 13 TPS), the plugin activates **Emergency Mode**:
 
-1. Makes view distance as small as possible
+1. Leaves live client view distance unchanged to protect connections
 2. Does an aggressive cleanup of everything
 3. Frees up memory
 

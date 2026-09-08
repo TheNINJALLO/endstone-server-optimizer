@@ -34,14 +34,14 @@ Server optimization plugin for Endstone Minecraft Bedrock. This release is align
 ## What it does
 
 - Monitors TPS and lag indicators and applies configurable cleanup and load-reduction actions.
-- Controls entity cleanup, packet-related optimizations, player view distance, and automatic thresholds.
+- Controls entity cleanup, packet-related optimizations, safe restart-based view-distance configuration, and automatic thresholds.
 - Provides read-only status commands for players and guarded configuration commands for operators.
 
 ## How to use
 
 1. Start once, back up the generated configuration, and review every cleanup whitelist before enabling aggressive actions.
 2. Use `/tps`, `/lag`, and `/optimize status` to establish a baseline under normal load.
-3. Tune view distance and TPS thresholds gradually, then verify gameplay before enabling full or packet optimizations.
+3. Change view distance with `/viewdistance <5-32>`, restart BDS to apply it, then verify gameplay before enabling full or packet optimizations.
 4. Use `/soconfig save` after validated changes and `/soconfig reload` after manual edits.
 
 ## Commands and permissions
@@ -51,7 +51,7 @@ Server optimization plugin for Endstone Minecraft Bedrock. This release is align
 | `/optimize`<br>`/optimize (status\|full\|packets)[action: OptAction]`<br>`/optimize view <player: player>`<br><sub>Aliases: `/opt`, `/perf`</sub> | Server optimization controls | `serveropt.command.optimize` |
 | `/tps` | Check server TPS | `serveropt.command.tps` |
 | `/lag` | View lag information | `serveropt.command.lag` |
-| `/viewdistance`<br>`/viewdistance <distance: int>`<br>`/viewdistance auto`<br><sub>Aliases: `/vd`</sub> | Manage view distance | `serveropt.command.viewdistance` |
+| `/viewdistance`<br>`/viewdistance <distance: int>`<br>`/viewdistance auto`<br><sub>Aliases: `/vd`</sub> | Read or safely update `server.properties`; a restart applies changes. Runtime packet adjustment stays disabled. | `serveropt.command.viewdistance` |
 | `/tpsthreshold`<br>`/tpsthreshold (critical\|warning\|target)<type: TpsType> <value: float>`<br><sub>Aliases: `/tpst`</sub> | Adjust TPS thresholds for optimization triggers | `serveropt.command.tpsthreshold` |
 | `/soconfig`<br>`/soconfig (reload\|reset\|save)[action: ConfigAction]`<br>`/soconfig set <key: str> <value: str>`<br>`/soconfig whitelist`<br>`/soconfig whitelist <action: str> <entity_type: str>`<br><sub>Aliases: `/soc`</sub> | Manage plugin configuration | `serveropt.command.config` |
 
@@ -63,17 +63,20 @@ Server optimization plugin for Endstone Minecraft Bedrock. This release is align
 | Endstone API | `0.11` |
 | Bedrock Dedicated Server | `1.26.44` |
 | Python | `>=3.10` |
-| Plugin release | `v2.2.3` |
+| Plugin release | `v2.2.4` |
 
 ## Install
 
 Download the wheel from the matching GitHub release:
 
 ```bash
-gh release download v2.2.3 --repo TheNINJALLO/endstone-server-optimizer --pattern "*.whl"
+gh release download v2.2.4 --repo TheNINJALLO/endstone-server-optimizer --pattern "*.whl"
 ```
 
 Copy the downloaded wheel into the server's `plugins/` directory, remove any older wheel for the same plugin, and restart Endstone.
+
+> [!NOTE]
+> Version 2.2.4 never sends synthetic chunk-radius packets. Older configs with `auto_view_distance: true` are automatically migrated to `false`, preventing join-time disconnects. `/viewdistance <5-32>` updates the existing `server.properties` file atomically and requires a server restart.
 
 > [!IMPORTANT]
 > Use Endstone `0.11.9` with BDS `1.26.44`. Back up worlds and plugin data before upgrading a production server.

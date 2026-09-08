@@ -6,13 +6,13 @@
 
 **ServerOptimizer** is a high-performance plugin specifically designed for **Endstone** servers (Minecraft Bedrock Edition) to monitor performance in real-time and automatically implement critical optimization routines to maintain a solid **20.0 TPS** (Ticks Per Second).
 
-Featuring dynamic view distance adjustment, emergency crash recovery, and detailed performance reporting, this plugin is an essential tool for stabilizing and scaling your server.
+Featuring safe restart-based view-distance configuration, emergency crash recovery, and detailed performance reporting, this plugin is an essential tool for stabilizing and scaling your server.
 
 ### ✨ Key Features
 
   * **Real-time TPS Monitoring:** Accurately tracks and records TPS values every second.
-  * **Dynamic View Distance:** Automatically adjusts the server's view distance based on live TPS to prevent lag spikes.
-  * **Emergency Crash Recovery:** Drastically reduces settings and runs aggressive cleanup when critical lag is detected (`TPS < 15.0`).
+  * **Safe View Distance:** Updates the authoritative `server.properties` setting without sending synthetic packets to connected or joining players.
+  * **Emergency Crash Recovery:** Runs aggressive cleanup when critical lag is detected (`TPS < 15.0`) without changing client radius state.
   * **Automatic Cleanup:** Periodically performs memory management (Garbage Collection) and clears estimated unnecessary chunks and entities.
   * **Performance Display:** Allows administrators to toggle a real-time TPS and player count popup display for specific players.
 
@@ -63,8 +63,8 @@ To ensure a clean and isolated build environment, use **pipx** to manage the bui
 | **`/optimize`** | `/optimize status` | View the detailed performance status (TPS, Health, View Distance). | `serveropt.command.optimize` | OP |
 | | `/optimize full` | Manually run a full optimization (Chunk/Entity/Memory cleanup). | `serveropt.command.optimize` | OP |
 | | `/optimize view <player>` | Toggle the continuous performance display for a player. | `serveropt.command.optimize` | OP |
-| **`/viewdistance`** | `/vd [distance]` | Manually set the server's view distance (between `4` and `12`). | `serveropt.command.viewdistance` | OP |
-| | `/vd auto` | Toggle the **Dynamic View Distance** feature (enabled by default). | `serveropt.command.viewdistance` | OP |
+| **`/viewdistance`** | `/vd [distance]` | Atomically set `view-distance` in `server.properties` (between `5` and `32`); restart required. | `serveropt.command.viewdistance` | OP |
+| | `/vd auto` | Confirm that unsafe runtime packet adjustment remains disabled. | `serveropt.command.viewdistance` | OP |
 | **`/tpsthreshold`** | `/tpsthreshold` | View current TPS threshold settings. | `serveropt.command.tpsthreshold` | OP |
 | | `/tpst critical <value>` | Set the TPS level that triggers **Emergency Crash Recovery** (1.0-20.0). | `serveropt.command.tpsthreshold` | OP |
 | | `/tpst warning <value>` | Set the TPS level that triggers **Auto-Optimization** (1.0-20.0). | `serveropt.command.tpsthreshold` | OP |
@@ -94,12 +94,12 @@ Configuration is stored in `plugins/server_optimizer/config.json` and can be man
 | `auto_optimize` | `true` | Master switch for all scheduled optimization routines. |
 | `optimization_interval` | `120` | How often (in seconds) the full auto-optimization runs. |
 | `tps_target` | `19.0` | Target TPS goal for optimization. |
-| `tps_warning` | `18.0` | TPS level that triggers auto-optimization. |
-| `tps_critical` | `15.0` | TPS level that triggers emergency crash recovery. |
-| `auto_view_distance` | `true` | Enable dynamic view distance adjustment. |
-| `base_view_distance` | `8` | Standard view distance for auto-adjustment. |
-| `min_view_distance` | `4` | Minimum view distance during lag. |
-| `max_view_distance` | `12` | Maximum view distance when TPS is high. |
+| `tps_warning` | `16.0` | TPS level that triggers auto-optimization. |
+| `tps_critical` | `13.0` | TPS level that triggers emergency crash recovery. |
+| `auto_view_distance` | `false` | Compatibility key. Runtime packet adjustment is always disabled for connection safety. |
+| `base_view_distance` | `12` | Last value configured through `/viewdistance`; retained for compatibility. |
+| `min_view_distance` | `6` | Legacy compatibility value; no live radius packets are sent. |
+| `max_view_distance` | `32` | Maximum accepted value for `/viewdistance`. |
 | `lag_alert_cooldown` | `60` | Seconds between lag alerts to admins. |
 | `afk_threshold` | `180` | Seconds before a player is considered AFK. |
 | `entity_limits` | (dict) | Limits for item, mob, minecart, boat, arrow entities. |
