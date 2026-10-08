@@ -15,6 +15,7 @@ from endstone.event import (
     PlayerQuitEvent,
     PlayerMoveEvent,
     ActorSpawnEvent,
+    ActorRemoveEvent,
     PacketSendEvent,
     event_handler,
 )
@@ -39,6 +40,8 @@ class ServerOptimizerPlugin(Plugin):
     prefix = "ServerOptimizer"
     api_version = "0.11"
     load = "POSTWORLD"
+    CLEANUP_WARNING_SECONDS = 30
+    ITEM_GRACE_SECONDS = 60
 
     commands = {
         "optimize": {
@@ -158,7 +161,7 @@ class ServerOptimizerPlugin(Plugin):
         
         # Runtime state (non-configurable)
         self.aggressive_mode = False
-        self.last_optimization = 0
+        self.last_optimization = time.time()
         self.current_view_distance = 8
         self.player_last_move: Dict[str, float] = {}  # player_name -> last move timestamp
         self.afk_players: Set[str] = set()
@@ -176,9 +179,9 @@ class ServerOptimizerPlugin(Plugin):
         self.memory_warning_threshold = 80.0
         self.memory_critical_threshold = 90.0
         self.health_score = 100
-        self.last_hourly_purge = 0
-        self.hourly_purge_30s_warning_sent = False
-        self.hourly_purge_5s_warning_sent = False
+        self.last_hourly_purge = time.time()
+        self.pending_entity_cleanup: Optional[Dict[str, Any]] = None
+        self.item_spawn_times: Dict[int, float] = {}
         self.health_history: deque = deque(maxlen=60)
         
         # Packet throttle tracking (disabled by default — breaks interaction sounds/particles)
@@ -211,7 +214,12 @@ class ServerOptimizerPlugin(Plugin):
         self.load_config()
 
     def on_enable(self) -> None:
-        self.logger.info("=== Server Optimizer v2.2.4 Enabled (API 0.11) ===")
+        self.logger.info("=== Server Optimizer v2.2.5 Enabled (API 0.11) ===")
+
+        # Start full intervals at enable time, including after a plugin reload.
+        self.last_optimization = self.last_hourly_purge = time.time()
+        self.pending_entity_cleanup = None
+        self.item_spawn_times.clear()
         
         # Register event listeners
         self.register_events(self)
@@ -273,6 +281,12 @@ class ServerOptimizerPlugin(Plugin):
         self.logger.info("All optimization tasks started!")
         self.logger.info(f"Packet throttling: {'ENABLED' if self.packet_throttle_enabled else 'DISABLED'}")
         self.logger.info("Crash protection: ENABLED")
+        self.logger.info(
+            f"Entity cleanup: {'ENABLED' if self.auto_optimize else 'DISABLED'}; "
+            f"hourly interval: {self.hourly_purge_interval}s; "
+            f"warnings: {self.CLEANUP_WARNING_SECONDS}s and 5s; "
+            f"fresh drops protected for {self.ITEM_GRACE_SECONDS}s."
+        )
 
     def on_disable(self) -> None:
         self.logger.info("=== Server Optimizer Disabled ===")
@@ -313,9 +327,13 @@ class ServerOptimizerPlugin(Plugin):
             self.show_detailed_status(sender)
         elif action == "full":
             sender.send_message("§e[Optimizer] Running full optimization...")
-            # Run the full hourly purge which clears everything and shows detailed stats
-            stats = self.hourly_entity_purge()
+            self._broadcast_cleanup("§e[Optimizer] Manual entity cleanup is running.")
+            # A manual cleanup supersedes any pending automatic cleanup.
+            self.pending_entity_cleanup = None
+            stats = self.hourly_entity_purge("Manual entity cleanup")
             self.optimize_memory()
+            self.last_optimization = self.last_hourly_purge = time.time()
+            self.total_optimizations += 1
             # Also send a summary to the command sender
             total_cleared = stats.get("entities_cleared", 0)
             total_entities = stats.get("entities_total", 0)
@@ -605,6 +623,7 @@ class ServerOptimizerPlugin(Plugin):
             sender.send_message("§e§l=== Server Optimizer Config ===")
             sender.send_message(f"§eauto_optimize: §f{self.auto_optimize}")
             sender.send_message(f"§eoptimization_interval: §f{self.optimization_interval}s")
+            sender.send_message(f"§ehourly_purge_interval: §f{self.hourly_purge_interval}s (0 disables hourly cleanup)")
             sender.send_message(f"§etps_target: §a{self.tps_target}")
             sender.send_message(f"§etps_warning: §6{self.tps_warning}")
             sender.send_message(f"§etps_critical: §c{self.tps_critical}")
@@ -637,7 +656,7 @@ class ServerOptimizerPlugin(Plugin):
         elif action == "set":
             if len(args) < 3:
                 sender.send_error_message("§cUsage: /config set <key> <value>")
-                sender.send_message("§7Available keys: auto_optimize, optimization_interval, tps_target,")
+                sender.send_message("§7Available keys: auto_optimize, optimization_interval, hourly_purge_interval, tps_target,")
                 sender.send_message("§7tps_warning, tps_critical, auto_view_distance, base_view_distance,")
                 sender.send_message("§7min_view_distance, max_view_distance, lag_alert_cooldown, afk_threshold")
                 return False
@@ -656,6 +675,9 @@ class ServerOptimizerPlugin(Plugin):
             if key == "auto_optimize":
                 value = value_str.lower() in ["true", "1", "yes", "on"]
                 setattr(self, key, value)
+                if not value and self.pending_entity_cleanup is not None:
+                    self.pending_entity_cleanup = None
+                    self._broadcast_cleanup("§e[Optimizer] Pending entity cleanup cancelled: automatic optimization is disabled.")
                 self.save_config()
                 sender.send_message(f"§a✓ Set {key} to §f{value}")
                 return True
@@ -667,6 +689,9 @@ class ServerOptimizerPlugin(Plugin):
                         "max_chunks_warning", "max_chunks_critical"]:
                 try:
                     value = int(value_str)
+                    if key in ("optimization_interval", "hourly_purge_interval") and value < 0:
+                        sender.send_error_message("§cCleanup intervals cannot be negative!")
+                        return False
                     setattr(self, key, value)
                     self.save_config()
                     sender.send_message(f"§a✓ Set {key} to §f{value}")
@@ -828,6 +853,17 @@ class ServerOptimizerPlugin(Plugin):
         
         sender.send_message(f"§eOptimizations: §f{self.total_optimizations}")
         sender.send_message(f"§eEntities Removed: §f{self.entities_removed_total}")
+        sender.send_message(f"§eAutomatic Cleanup: §f{'Enabled' if self.auto_optimize else 'Disabled'}")
+        if self.auto_optimize:
+            if self.pending_entity_cleanup is not None:
+                remaining = max(0, int(self.pending_entity_cleanup["execute_at"] - time.time()))
+                sender.send_message(f"§ePending Cleanup: §f{self.pending_entity_cleanup['reason']} in {remaining}s")
+            elif self.hourly_purge_interval > 0:
+                remaining = max(0, int(self.hourly_purge_interval - (time.time() - self.last_hourly_purge)))
+                sender.send_message(f"§eNext Hourly Cleanup: §f{remaining}s")
+            else:
+                sender.send_message("§eHourly Cleanup: §7Disabled")
+        sender.send_message(f"§eFresh Drop Protection: §f{self.ITEM_GRACE_SECONDS}s")
         sender.send_message(f"§ePackets Throttled: §f{self.packets_throttled:,}")
         sender.send_message("§e§l═══════════════════")
 
@@ -860,13 +896,11 @@ class ServerOptimizerPlugin(Plugin):
         current_time = time.time()
         tps = self.calculate_tps()
         
-        # Optimize if TPS is low or enough time has passed
-        if tps < self.tps_warning or current_time - self.last_optimization >= self.optimization_interval:
-            self.logger.info(f"Auto-optimization triggered (TPS: {tps:.2f})")
-            entities_removed = self.optimize_entities()
-            self.last_optimization = current_time
-            self.total_optimizations += 1
-            self.logger.info(f"Auto-optimization complete. Entities removed: {entities_removed}")
+        elapsed = current_time - self.last_optimization
+        low_tps = tps < self.tps_warning and elapsed >= max(60, self.lag_alert_cooldown)
+        if low_tps or elapsed >= self.optimization_interval:
+            reason = f"Low TPS cleanup ({tps:.2f} TPS)" if low_tps else "Scheduled limit cleanup"
+            self.request_entity_cleanup(reason)
 
     def detect_afk_players(self) -> None:
         """Detect AFK players using PlayerMoveEvent timestamps."""
@@ -1012,6 +1046,43 @@ class ServerOptimizerPlugin(Plugin):
             pass
         return count
 
+    @staticmethod
+    def _is_dropped_item(actor_type: str) -> bool:
+        return actor_type.lower().split(":")[-1] == "item"
+
+    def _is_recent_drop(self, actor: Any) -> bool:
+        """Protect new drops, including items whose spawn event was not observed."""
+        now = time.time()
+        try:
+            spawned_at = self.item_spawn_times.setdefault(actor.runtime_id, now)
+            return now - spawned_at < self.ITEM_GRACE_SECONDS
+        except Exception:
+            # An item with an unreadable identity cannot be safely aged.
+            return True
+
+    def _broadcast_cleanup(self, message: str) -> None:
+        self.logger.info(message)
+        for player in self.server.online_players:
+            try:
+                player.send_message(message)
+            except Exception as exc:
+                self.logger.warning(f"Could not send cleanup notification: {exc}")
+
+    def request_entity_cleanup(self, reason: str, full: bool = False) -> None:
+        """Queue one automatic cleanup and announce it before any removal."""
+        if not self.auto_optimize or self.pending_entity_cleanup is not None:
+            return
+        self.pending_entity_cleanup = {
+            "reason": reason,
+            "full": full,
+            "execute_at": time.time() + self.CLEANUP_WARNING_SECONDS,
+            "five_second_warning_sent": False,
+        }
+        self._broadcast_cleanup(
+            f"§e[Optimizer] {reason} in §f{self.CLEANUP_WARNING_SECONDS} seconds§e. "
+            "Pick up ground items; recent drops are protected."
+        )
+
     def optimize_entities(self) -> int:
         """
         Removes excess entities from the world while protecting nametagged entities.
@@ -1094,7 +1165,7 @@ class ServerOptimizerPlugin(Plugin):
                         # Unoccupied boats will be categorized below for limit-based removal
                     
                     # Categorize by type
-                    if "item" in actor_type:
+                    if self._is_dropped_item(actor_type):
                         entity_counts["item"].append(actor)
                     elif "arrow" in actor_type:
                         entity_counts["arrow"].append(actor)
@@ -1131,6 +1202,8 @@ class ServerOptimizerPlugin(Plugin):
                     to_remove = entities[:-limit] if limit > 0 else entities
                     for entity in to_remove:
                         try:
+                            if entity_type == "item" and self._is_recent_drop(entity):
+                                continue
                             entity.remove()
                             count += 1
                         except Exception:
@@ -1143,52 +1216,56 @@ class ServerOptimizerPlugin(Plugin):
             
         except Exception as e:
             self.logger.error(f"Entity optimization error: {e}")
-            # Fallback: just report estimated removals for stats
-            fallback_count = 50 if not self.aggressive_mode else 100
-            self.entities_removed_total += fallback_count
-            return fallback_count
+            return count
         
         return count
 
     def hourly_entity_purge_check(self) -> None:
-        """Check if it's time for the hourly entity purge and send warnings."""
+        """Drive all automatic cleanup countdowns, including lag recovery."""
         if not self.auto_optimize:
+            if self.pending_entity_cleanup is not None:
+                self.pending_entity_cleanup = None
+                self._broadcast_cleanup("§e[Optimizer] Pending entity cleanup cancelled: automatic optimization is disabled.")
             return
-        
-        current_time = time.time()
-        time_since_last_purge = current_time - self.last_hourly_purge
-        time_until_purge = self.hourly_purge_interval - time_since_last_purge
-        
-        # Send 30 second warning
-        if time_until_purge <= 30 and time_until_purge > 5 and not self.hourly_purge_30s_warning_sent:
-            self.hourly_purge_30s_warning_sent = True
-            for player in self.server.online_players:
-                try:
-                    player.send_message("§e[Server] §6⚠ Entity cleanup in §f30 seconds§6! Ground items and mobs will be cleared.")
-                except Exception:
-                    pass
-        
-        # Send 5 second warning
-        if time_until_purge <= 5 and time_until_purge > 0 and not self.hourly_purge_5s_warning_sent:
-            self.hourly_purge_5s_warning_sent = True
-            for player in self.server.online_players:
-                try:
-                    player.send_message("§c[Server] §c⚠ Entity cleanup in §f5 seconds§c! Pick up your items now!")
-                except Exception:
-                    pass
-        
-        # Execute the purge
-        if time_since_last_purge >= self.hourly_purge_interval:
-            self.hourly_entity_purge()
-            self.last_hourly_purge = current_time
-            # Reset warning flags for next cycle
-            self.hourly_purge_30s_warning_sent = False
-            self.hourly_purge_5s_warning_sent = False
 
-    def hourly_entity_purge(self) -> dict:
+        current_time = time.time()
+        pending = self.pending_entity_cleanup
+        if pending is not None:
+            remaining = pending["execute_at"] - current_time
+            if remaining <= 5 and not pending["five_second_warning_sent"]:
+                # Even after a server stall, allow five actual seconds after
+                # the final warning instead of silently catching up a purge.
+                pending["execute_at"] = current_time + 5
+                pending["five_second_warning_sent"] = True
+                self._broadcast_cleanup(
+                    f"§c[Optimizer] {pending['reason']} in §f5 seconds§c! Pick up your items now!"
+                )
+                return
+            if current_time >= pending["execute_at"]:
+                self.pending_entity_cleanup = None
+                self._broadcast_cleanup(f"§e[Optimizer] {pending['reason']} is running.")
+                if pending["full"]:
+                    self.hourly_entity_purge(pending["reason"])
+                    self.last_hourly_purge = current_time
+                else:
+                    removed = self.optimize_entities()
+                    self._broadcast_cleanup(
+                        f"§a[Optimizer] {pending['reason']} complete: cleared {removed} excess entities. "
+                        "Recent drops were protected."
+                    )
+                self.last_optimization = current_time
+                self.total_optimizations += 1
+            return
+
+        if self.hourly_purge_interval > 0:
+            time_until_purge = self.hourly_purge_interval - (current_time - self.last_hourly_purge)
+            if time_until_purge <= self.CLEANUP_WARNING_SECONDS:
+                self.request_entity_cleanup("Hourly entity cleanup", full=True)
+
+    def hourly_entity_purge(self, reason: str = "Full entity cleanup") -> dict:
         """
-        Complete purge of items, arrows, xp_orbs, mobs, and unloads excess chunks.
-        Preserves minecarts, boats, and nametagged entities.
+        Purge older items, arrows, xp_orbs, and mobs.
+        Preserves recent drops, minecarts, boats, and nametagged entities.
         This runs on the hourly_purge_interval (default: 1 hour).
         Returns a dictionary with counts by category.
         """
@@ -1212,14 +1289,12 @@ class ServerOptimizerPlugin(Plugin):
             # Get chunk stats before optimization
             stats["chunks_total"] = self.get_total_loaded_chunks()
             
-            # Optimize chunks
-            chunks_cleared = self.optimize_chunks()
-            stats["chunks_cleared"] = chunks_cleared
+            # Endstone exposes chunk counts, not chunk unloading. Never claim
+            # that a loaded chunk was cleared merely because it was counted.
             
             level = self.server.level
             if level is None:
-                # Still show results if we cleared chunks
-                self._notify_hourly_cleanup(stats)
+                self._notify_hourly_cleanup(stats, reason)
                 return stats
             
             actors = level.actors
@@ -1264,7 +1339,7 @@ class ServerOptimizerPlugin(Plugin):
                     
                     # Categorize and mark for removal
                     category = None
-                    if "item" in actor_type:
+                    if self._is_dropped_item(actor_type):
                         category = "items"
                         stats["items_total"] += 1
                     elif "arrow" in actor_type:
@@ -1291,6 +1366,8 @@ class ServerOptimizerPlugin(Plugin):
             # Remove all marked entities and count by category
             for entity, category in entities_to_remove:
                 try:
+                    if category == "items" and self._is_recent_drop(entity):
+                        continue
                     entity.remove()
                     stats[f"{category}_cleared"] += 1
                     stats["entities_cleared"] += 1
@@ -1304,36 +1381,20 @@ class ServerOptimizerPlugin(Plugin):
                 self.logger.info(f"§e[Hourly Purge] Cleared {stats['entities_cleared']}/{stats['entities_total']} entities, {stats['chunks_cleared']}/{stats['chunks_total']} chunks")
             
             # Notify players
-            self._notify_hourly_cleanup(stats)
+            self._notify_hourly_cleanup(stats, reason)
             
         except Exception as e:
             self.logger.error(f"Hourly entity purge error: {e}")
         
         return stats
     
-    def _notify_hourly_cleanup(self, stats: dict) -> None:
-        """Send hourly cleanup notification to all online players with detailed stats."""
-        has_entities = stats["entities_cleared"] > 0
-        has_chunks = stats["chunks_cleared"] > 0
-        
-        for player in self.server.online_players:
-            try:
-                if has_entities or has_chunks:
-                    # Header
-                    player.send_message("§8§m──────────────")
-                    player.send_message("§a§l  ✓ §e§lHOURLY CLEANUP COMPLETE")
-                    player.send_message("§8§m──────────────")
-                    
-                    # Entity stats with icons
-                    player.send_message(f"§6  ⬛ §eItems     §8» §a{stats['items_cleared']}§7/§f{stats['items_total']}")
-                    player.send_message(f"§c  ⚔ §eMobs      §8» §a{stats['mobs_cleared']}§7/§f{stats['mobs_total']}")
-                    player.send_message(f"§d  ✦ §eXP Orbs   §8» §a{stats['xp_orbs_cleared']}§7/§f{stats['xp_orbs_total']}")
-                    player.send_message(f"§2  ▦ §eChunks    §8» §a{stats['chunks_cleared']}§7/§f{stats['chunks_total']}")
-
-                else:
-                    player.send_message("§a§l✓ §e§lHourly Cleanup Complete! §7Nothing needed clearing.")
-            except Exception:
-                pass
+    def _notify_hourly_cleanup(self, stats: dict, reason: str = "Full entity cleanup") -> None:
+        """Report actual removals to every player, including when nothing was removed."""
+        self._broadcast_cleanup(
+            f"§a[Optimizer] {reason} complete: cleared {stats['items_cleared']} items, "
+            f"{stats['mobs_cleared']} mobs, {stats['arrows_cleared']} arrows, "
+            f"and {stats['xp_orbs_cleared']} XP orbs. Recent drops were protected."
+        )
 
     def _is_entity_whitelisted(self, actor_type: str) -> bool:
         """Check if an entity type matches any entry in the whitelist."""
@@ -1513,22 +1574,21 @@ class ServerOptimizerPlugin(Plugin):
             self.logger.error(f"Task monitoring failed: {e}")
 
     def emergency_crash_recovery(self) -> None:
+        if not self.auto_optimize or self.aggressive_mode:
+            return
         try:
             self.logger.warning("=== EMERGENCY CRASH RECOVERY ACTIVATED ===")
             
             # Activate aggressive mode
             self.aggressive_mode = True
             
-            # Force immediate optimization
+            # Free memory immediately; destructive entity cleanup gets the same
+            # player warning countdown as every other automatic cleanup.
             self.optimize_chunks()
-            self.optimize_entities()
+            self.request_entity_cleanup("Emergency lag cleanup")
             self.optimize_memory()
-            
-            for player in self.server.online_players:
-                if player.is_op or player.has_permission("serveropt.admin"):
-                    player.send_message("§c§l[EMERGENCY] §cEmergency cleanup activated; view distance was left unchanged.")
-            
-            self.logger.warning("=== EMERGENCY RECOVERY COMPLETE. Restoration scheduled. ===")
+
+            self.logger.warning("=== EMERGENCY RECOVERY ACTIVE. Entity cleanup queued; restoration scheduled. ===")
             
             # Schedule restoration to normal settings after 5 minutes (6000 ticks)
             def restore_normal():
@@ -1582,7 +1642,7 @@ class ServerOptimizerPlugin(Plugin):
                     tps = self.calculate_tps()
                     mspt = self.get_mspt()
                     color = self.get_tps_color(tps)
-                    player.send_message("§e§l[Server Optimizer v2.2.4]")
+                    player.send_message("§e§l[Server Optimizer v2.2.5]")
                     player.send_message(f"§7TPS: {color}{tps:.2f}§7/20.0 §8| §7MSPT: §f{mspt:.1f}ms")
                     chunks = self.get_total_loaded_chunks()
                     player.send_message(f"§7Chunks: §f{chunks} §8| §7Packet Throttle: {'§aON' if self.packet_throttle_enabled else '§cOFF'}")
@@ -1613,36 +1673,32 @@ class ServerOptimizerPlugin(Plugin):
         except Exception:
             pass
 
-    @event_handler(priority=EventPriority.HIGHEST)
+    @event_handler(priority=EventPriority.MONITOR)
     def on_actor_spawn(self, event: ActorSpawnEvent) -> None:
-        """Throttle entity spawns when dimension is over limit."""
+        """Age dropped items and queue warned cleanup for extreme entity buildup."""
         try:
-            if not self.auto_optimize:
+            if event.is_cancelled:
                 return
-            
             actor = event.actor
-            if not hasattr(actor, 'type') or not hasattr(actor, 'dimension'):
-                return
-            
             actor_type = actor.type.lower()
-            
-            # Only throttle clearable entity types
-            clearable_keywords = ["item", "arrow", "xp_orb", "experience_orb", "minecart", "boat"]
-            is_clearable = any(kw in actor_type for kw in clearable_keywords)
-            
-            if not is_clearable:
+            if self._is_dropped_item(actor_type):
+                self.item_spawn_times[actor.runtime_id] = time.time()
+
+            if not self.auto_optimize or self._is_entity_whitelisted(actor_type) or actor.name_tag:
                 return
-            
-            # Check dimension entity count
-            dim = actor.dimension
-            actor_count = len(dim.actors)
-            
-            # Only cancel spawns during extreme entity buildup to prevent crashes
+            if not (self._is_dropped_item(actor_type) or actor_type.split(":")[-1] in ("arrow", "xp_orb", "experience_orb")):
+                return
             max_entities = 1000 if self.aggressive_mode else 2000
-            if actor_count > max_entities:
-                event.is_cancelled = True
-        except Exception:
-            pass
+            if len(actor.dimension.actors) > max_entities:
+                # Cancelling an item spawn loses a player's drop. Handle the
+                # buildup through the announced cleanup instead.
+                self.request_entity_cleanup("Entity buildup cleanup")
+        except Exception as exc:
+            self.logger.warning(f"Could not track entity spawn: {exc}")
+
+    @event_handler(priority=EventPriority.MONITOR)
+    def on_actor_remove(self, event: ActorRemoveEvent) -> None:
+        self.item_spawn_times.pop(event.actor.runtime_id, None)
 
     @event_handler(priority=EventPriority.HIGHEST)
     def on_packet_send(self, event: PacketSendEvent) -> None:

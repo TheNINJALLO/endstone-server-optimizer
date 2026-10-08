@@ -12,8 +12,8 @@ Featuring safe restart-based view-distance configuration, emergency crash recove
 
   * **Real-time TPS Monitoring:** Accurately tracks and records TPS values every second.
   * **Safe View Distance:** Updates the authoritative `server.properties` setting without sending synthetic packets to connected or joining players.
-  * **Emergency Crash Recovery:** Runs aggressive cleanup when critical lag is detected (`TPS < 15.0`) without changing client radius state.
-  * **Automatic Cleanup:** Periodically performs memory management (Garbage Collection) and clears estimated unnecessary chunks and entities.
+  * **Emergency Crash Recovery:** Queues aggressive entity cleanup when critical lag is detected (default `TPS < 13.0`) with player warnings, while freeing memory immediately.
+  * **Automatic Cleanup:** Warns all players at 30 seconds and 5 seconds, announces when cleanup runs, and reports actual entity removals. Fresh drops are protected for 60 seconds; item frames are preserved. Chunk counts are reported without claiming to unload them.
   * **Performance Display:** Allows administrators to toggle a real-time TPS and player count popup display for specific players.
 
 -----
@@ -22,8 +22,8 @@ Featuring safe restart-based view-distance configuration, emergency crash recove
 
 ### Prerequisites
 
-  * An active **Endstone** server instance (version `0.10` or higher).
-  * **Python 3.8+** for running the plugin and for developers wishing to build from source.
+  * An active **Endstone 0.11.9** server instance running **BDS 1.26.44**.
+  * **Python 3.10+** for running the plugin and for developers wishing to build from source.
 
 ### Option 1: Install the Pre-Built Plugin (Recommended)
 
@@ -61,7 +61,7 @@ To ensure a clean and isolated build environment, use **pipx** to manage the bui
 | **`/tps`** | `/tps` | Check the current server TPS (Ticks Per Second). | `serveropt.command.tps` | True (All players) |
 | **`/lag`** | `/lag` | View a simple lag/status report. | `serveropt.command.lag` | True (All players) |
 | **`/optimize`** | `/optimize status` | View the detailed performance status (TPS, Health, View Distance). | `serveropt.command.optimize` | OP |
-| | `/optimize full` | Manually run a full optimization (Chunk/Entity/Memory cleanup). | `serveropt.command.optimize` | OP |
+| | `/optimize full` | Run immediate manual entity/memory cleanup with announcements; fresh drops remain protected. | `serveropt.command.optimize` | OP |
 | | `/optimize view <player>` | Toggle the continuous performance display for a player. | `serveropt.command.optimize` | OP |
 | **`/viewdistance`** | `/vd [distance]` | Atomically set `view-distance` in `server.properties` (between `5` and `32`); restart required. | `serveropt.command.viewdistance` | OP |
 | | `/vd auto` | Confirm that unsafe runtime packet adjustment remains disabled. | `serveropt.command.viewdistance` | OP |
@@ -69,30 +69,31 @@ To ensure a clean and isolated build environment, use **pipx** to manage the bui
 | | `/tpst critical <value>` | Set the TPS level that triggers **Emergency Crash Recovery** (1.0-20.0). | `serveropt.command.tpsthreshold` | OP |
 | | `/tpst warning <value>` | Set the TPS level that triggers **Auto-Optimization** (1.0-20.0). | `serveropt.command.tpsthreshold` | OP |
 | | `/tpst target <value>` | Set the **Target TPS** goal (1.0-20.0). | `serveropt.command.tpsthreshold` | OP |
-| **`/config`** | `/config` | View all current configuration settings. | `serveropt.command.config` | OP |
-| | `/config reload` | **Hot reload** configuration from file without restarting. | `serveropt.command.config` | OP |
-| | `/config set <key> <value>` | Edit a config value in-game (auto-saves to file). | `serveropt.command.config` | OP |
-| | `/config reset` | Reset all settings to defaults and save. | `serveropt.command.config` | OP |
-| | `/config save` | Manually save current settings to config file. | `serveropt.command.config` | OP |
+| **`/soconfig`** | `/soconfig` | View all current configuration settings. | `serveropt.command.config` | OP |
+| | `/soconfig reload` | **Hot reload** configuration from file without restarting. | `serveropt.command.config` | OP |
+| | `/soconfig set <key> <value>` | Edit a config value in-game (auto-saves to file). | `serveropt.command.config` | OP |
+| | `/soconfig reset` | Reset all settings to defaults and save. | `serveropt.command.config` | OP |
+| | `/soconfig save` | Manually save current settings to config file. | `serveropt.command.config` | OP |
 
 ### Administrator Permission Node
 
-The permission node `serveropt.admin` grants access to all administrative commands (`/optimize`, `/viewdistance`, `/tpsthreshold`, and `/config`). This is automatically granted to OP players.
+The permission node `serveropt.admin` grants access to all administrative commands (`/optimize`, `/viewdistance`, `/tpsthreshold`, and `/soconfig`). This is automatically granted to OP players.
 
 -----
 
 ## 🔧 Configuration
 
 Configuration is stored in `plugins/server_optimizer/config.json` and can be managed:
-- **In-game** using the `/config` command (with hot reload support)
-- **By editing** the `config.json` file directly (use `/config reload` to apply changes)
+- **In-game** using the `/soconfig` command (with hot reload support)
+- **By editing** the `config.json` file directly (use `/soconfig reload` to apply changes)
 
 ### Configurable Settings
 
 | Setting | Default | Description |
 | :--- | :--- | :--- |
 | `auto_optimize` | `true` | Master switch for all scheduled optimization routines. |
-| `optimization_interval` | `120` | How often (in seconds) the full auto-optimization runs. |
+| `optimization_interval` | `900` | Seconds between scheduled limit cleanups. The first interval starts when the plugin is enabled; removal follows a 30-second warning countdown. |
+| `hourly_purge_interval` | `3600` | Seconds between full entity purges. Set to `0` to disable hourly purges while retaining limit-based cleanup. |
 | `tps_target` | `19.0` | Target TPS goal for optimization. |
 | `tps_warning` | `16.0` | TPS level that triggers auto-optimization. |
 | `tps_critical` | `13.0` | TPS level that triggers emergency crash recovery. |
@@ -103,6 +104,8 @@ Configuration is stored in `plugins/server_optimizer/config.json` and can be man
 | `lag_alert_cooldown` | `60` | Seconds between lag alerts to admins. |
 | `afk_threshold` | `180` | Seconds before a player is considered AFK. |
 | `entity_limits` | (dict) | Limits for item, mob, minecart, boat, arrow entities. |
+
+`/optimize status` shows whether automatic cleanup is enabled and the next hourly cleanup or pending countdown. `/soconfig set auto_optimize false` cancels a pending automatic cleanup and disables automatic emergency entity cleanup. Manual `/optimize full` remains available and announces its start and completion to all players.
 
 -----
 

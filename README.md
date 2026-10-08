@@ -35,6 +35,7 @@ Server optimization plugin for Endstone Minecraft Bedrock. This release is align
 
 - Monitors TPS and lag indicators and applies configurable cleanup and load-reduction actions.
 - Controls entity cleanup, packet-related optimizations, safe restart-based view-distance configuration, and automatic thresholds.
+- Announces every automatic entity cleanup to all players at 30 seconds and 5 seconds, reports completion, and protects dropped items for 60 seconds.
 - Provides read-only status commands for players and guarded configuration commands for operators.
 
 ## How to use
@@ -43,6 +44,7 @@ Server optimization plugin for Endstone Minecraft Bedrock. This release is align
 2. Use `/tps`, `/lag`, and `/optimize status` to establish a baseline under normal load.
 3. Change view distance with `/viewdistance <5-32>`, restart BDS to apply it, then verify gameplay before enabling full or packet optimizations.
 4. Use `/soconfig save` after validated changes and `/soconfig reload` after manual edits.
+5. Check the next cleanup with `/optimize status`. Use `/soconfig set hourly_purge_interval 0` to disable hourly purges, or `/soconfig set auto_optimize false` to disable all automatic cleanup and cancel a pending countdown.
 
 ## Commands and permissions
 
@@ -63,20 +65,20 @@ Server optimization plugin for Endstone Minecraft Bedrock. This release is align
 | Endstone API | `0.11` |
 | Bedrock Dedicated Server | `1.26.44` |
 | Python | `>=3.10` |
-| Plugin release | `v2.2.4` |
+| Plugin release | `v2.2.5` |
 
 ## Install
 
 Download the wheel from the matching GitHub release:
 
 ```bash
-gh release download v2.2.4 --repo TheNINJALLO/endstone-server-optimizer --pattern "*.whl"
+gh release download v2.2.5 --repo TheNINJALLO/endstone-server-optimizer --pattern "*.whl"
 ```
 
 Copy the downloaded wheel into the server's `plugins/` directory, remove any older wheel for the same plugin, and restart Endstone.
 
 > [!NOTE]
-> Version 2.2.4 never sends synthetic chunk-radius packets. Older configs with `auto_view_distance: true` are automatically migrated to `false`, preventing join-time disconnects. `/viewdistance <5-32>` updates the existing `server.properties` file atomically and requires a server restart.
+> Version 2.2.5 starts cleanup intervals when the plugin is enabled, prevents silent item-spawn cancellation, and gives every automatic cleanup a warning countdown, including emergency lag cleanup. Fresh drops and item frames are protected. It retains the view-distance safety fix from 2.2.4: older configs with `auto_view_distance: true` are migrated to `false`, and `/viewdistance <5-32>` requires a server restart.
 
 > [!IMPORTANT]
 > Use Endstone `0.11.9` with BDS `1.26.44`. Back up worlds and plugin data before upgrading a production server.

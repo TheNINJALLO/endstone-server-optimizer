@@ -24,11 +24,15 @@ View distance is how far you can see in the game. Use `/viewdistance <5-32>` to 
 ## 🧹 Cleaning Up Stuff
 
 ### The Auto Cleanup (Every 15 Minutes)
-The plugin counts things like items, arrows, XP orbs, and mobs. If there are way too many (900+ items, 600+ mobs), it removes the oldest ones. Normal gameplay won't hit these limits.
+The plugin counts items, arrows, XP orbs, and mobs. When there are more than the configured limits (defaults: 900 items and 600 mobs), it removes excess entities. Low TPS and extreme entity buildup can also queue limit cleanup.
+
+Every automatic entity cleanup announces a **30-second warning**, a **5-second reminder**, when it runs, and its removal counts to **all online players**. If server lag skips the final warning time, cleanup waits five seconds after sending that reminder. Repeated triggers share one pending countdown.
+
+Dropped items are protected for **60 seconds** after spawning. If an item's spawn time is unknown, protection starts when cleanup first encounters it. The optimizer never cancels item spawns, and item frames are not treated as dropped items.
 
 ### The Big Cleanup (Every Hour)
 Once an hour, the plugin does a deep clean and removes:
-- ✅ All items on the ground
+- ✅ Items on the ground older than the 60-second protection period
 - ✅ All arrows
 - ✅ All XP orbs
 - ✅ All mobs
@@ -40,6 +44,10 @@ Once an hour, the plugin does a deep clean and removes:
 - 📋 **Anything on the entity whitelist!**
 
 Your named pets, villagers, and animals are always safe! 🛡️
+
+The first hourly interval starts when the plugin is enabled, so it does not purge immediately on startup. `/optimize status` shows the next cleanup or pending countdown. Use `/soconfig set hourly_purge_interval 0` to disable hourly purges, or `/soconfig set auto_optimize false` to disable all automatic entity cleanup and cancel a pending countdown.
+
+Manual `/optimize full` runs immediately, announces its start and completion to everyone, and retains fresh-drop protection. It resets the automatic timers to avoid a second cleanup immediately afterward. The plugin reports loaded chunks but cannot unload them through Endstone.
 
 ### Entity Whitelist
 You can add specific entity types to a whitelist so they are **never** removed during any cleanup. This is useful for custom entities like decorations, Easter eggs, or special mobs.
@@ -69,7 +77,7 @@ Every 5 minutes, the plugin cleans up the server's memory (like clearing your co
 If the server gets really slow (below 13 TPS), the plugin activates **Emergency Mode**:
 
 1. Leaves live client view distance unchanged to protect connections
-2. Does an aggressive cleanup of everything
+2. Queues aggressive limit cleanup with the same 30-second and 5-second warnings and fresh-drop protection
 3. Frees up memory
 
 After 5 minutes, things go back to normal. This saves your server from crashing!

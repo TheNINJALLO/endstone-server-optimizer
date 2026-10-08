@@ -49,6 +49,7 @@ def _install_endstone_stubs() -> None:
         "PlayerQuitEvent",
         "PlayerMoveEvent",
         "ActorSpawnEvent",
+        "ActorRemoveEvent",
         "PacketSendEvent",
     ):
         setattr(event, name, _Stub)
