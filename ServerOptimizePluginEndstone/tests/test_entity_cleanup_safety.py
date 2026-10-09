@@ -66,8 +66,10 @@ class EntityCleanupSafetyTests(unittest.TestCase):
         self.now.return_value = 4600
         self.plugin.hourly_entity_purge_check()
         item.remove.assert_called_once_with()
-        self.assertIn("is running", self.messages()[-2])
-        self.assertIn("cleared 1 items", self.messages()[-1])
+        self.assertTrue(any("is running" in message for message in self.messages()))
+        self.assertTrue(any("HOURLY CLEANUP COMPLETE" in message for message in self.messages()))
+        item_readout = next(message for message in self.messages() if "Items" in message)
+        self.assertIn("§a1§7/§f1", item_readout)
         self.assertEqual(self.plugin.entities_removed_total, 1)
         self.assertEqual(self.plugin.total_optimizations, 1)
         self.assertEqual(self.plugin.last_hourly_purge, 4600)
@@ -267,8 +269,8 @@ class EntityCleanupSafetyTests(unittest.TestCase):
         )
         self.now.return_value = 1100
         self.assertTrue(self.plugin.handle_optimize_command(sender, ["full"]))
-        self.assertIn("Manual entity cleanup is running", self.messages()[-2])
-        self.assertIn("Manual entity cleanup complete", self.messages()[-1])
+        self.assertTrue(any("Manual entity cleanup is running" in message for message in self.messages()))
+        self.assertTrue(any("MANUAL CLEANUP COMPLETE" in message for message in self.messages()))
         self.assertIsNone(self.plugin.pending_entity_cleanup)
         self.assertEqual(self.plugin.last_hourly_purge, 1100)
         self.assertEqual(self.plugin.last_optimization, 1100)

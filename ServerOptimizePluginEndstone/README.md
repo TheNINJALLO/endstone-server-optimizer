@@ -14,6 +14,7 @@ Featuring safe restart-based view-distance configuration, emergency crash recove
   * **Safe View Distance:** Updates the authoritative `server.properties` setting without sending synthetic packets to connected or joining players.
   * **Emergency Crash Recovery:** Queues aggressive entity cleanup when critical lag is detected (default `TPS < 13.0`) with player warnings, while freeing memory immediately.
   * **Automatic Cleanup:** Warns all players at 30 seconds and 5 seconds, announces when cleanup runs, and reports actual entity removals. Fresh drops are protected for 60 seconds; item frames are preserved. Chunk counts are reported without claiming to unload them.
+  * **Detailed Cleanup Readout:** Hourly and manual full cleanup show the bordered chat panel with colored cleared/total counts for items, mobs, arrows, and XP orbs, and the loaded chunk count, even when nothing is removed.
   * **Performance Display:** Allows administrators to toggle a real-time TPS and player count popup display for specific players.
 
 -----

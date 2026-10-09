@@ -28,6 +28,8 @@ The plugin counts items, arrows, XP orbs, and mobs. When there are more than the
 
 Every automatic entity cleanup announces a **30-second warning**, a **5-second reminder**, when it runs, and its removal counts to **all online players**. If server lag skips the final warning time, cleanup waits five seconds after sending that reminder. Repeated triggers share one pending countdown.
 
+Hourly and manual full cleanup retain the detailed bordered chat readout: **Items**, **Mobs**, **Arrows**, and **XP Orbs** each show **cleared / total**, while **Chunks** shows the loaded count. The readout is also shown when nothing is removed.
+
 Dropped items are protected for **60 seconds** after spawning. If an item's spawn time is unknown, protection starts when cleanup first encounters it. The optimizer never cancels item spawns, and item frames are not treated as dropped items.
 
 ### The Big Cleanup (Every Hour)

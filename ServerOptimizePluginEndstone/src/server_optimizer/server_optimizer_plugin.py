@@ -214,7 +214,7 @@ class ServerOptimizerPlugin(Plugin):
         self.load_config()
 
     def on_enable(self) -> None:
-        self.logger.info("=== Server Optimizer v2.2.5 Enabled (API 0.11) ===")
+        self.logger.info("=== Server Optimizer v2.2.6 Enabled (API 0.11) ===")
 
         # Start full intervals at enable time, including after a plugin reload.
         self.last_optimization = self.last_hourly_purge = time.time()
@@ -1389,12 +1389,28 @@ class ServerOptimizerPlugin(Plugin):
         return stats
     
     def _notify_hourly_cleanup(self, stats: dict, reason: str = "Full entity cleanup") -> None:
-        """Report actual removals to every player, including when nothing was removed."""
-        self._broadcast_cleanup(
-            f"§a[Optimizer] {reason} complete: cleared {stats['items_cleared']} items, "
-            f"{stats['mobs_cleared']} mobs, {stats['arrows_cleared']} arrows, "
-            f"and {stats['xp_orbs_cleared']} XP orbs. Recent drops were protected."
-        )
+        """Show the detailed cleanup panel to every player, including empty runs."""
+        title = {
+            "Hourly entity cleanup": "HOURLY CLEANUP COMPLETE",
+            "Manual entity cleanup": "MANUAL CLEANUP COMPLETE",
+            "Full entity cleanup": "FULL CLEANUP COMPLETE",
+        }.get(reason, f"{reason.upper()} COMPLETE")
+        lines = [
+            "§8§m──────────────",
+            f"§a§l  ✓ §e§l{title}",
+            "§8§m──────────────",
+            f"§6  ⬛ §eItems     §8» §a{stats['items_cleared']}§7/§f{stats['items_total']}",
+            f"§c  ⚔ §eMobs      §8» §a{stats['mobs_cleared']}§7/§f{stats['mobs_total']}",
+            f"§a  ➶ §eArrows    §8» §a{stats['arrows_cleared']}§7/§f{stats['arrows_total']}",
+            f"§d  ✦ §eXP Orbs   §8» §a{stats['xp_orbs_cleared']}§7/§f{stats['xp_orbs_total']}",
+            f"§2  ▦ §eChunks    §8» §f{stats['chunks_total']} §7loaded",
+            "§7Counts: cleared / total. Recent drops are protected.",
+        ]
+        if stats["entities_cleared"] == 0:
+            lines.append("§7Nothing needed clearing.")
+        lines.append("§8§m──────────────")
+        for line in lines:
+            self._broadcast_cleanup(line)
 
     def _is_entity_whitelisted(self, actor_type: str) -> bool:
         """Check if an entity type matches any entry in the whitelist."""
@@ -1642,7 +1658,7 @@ class ServerOptimizerPlugin(Plugin):
                     tps = self.calculate_tps()
                     mspt = self.get_mspt()
                     color = self.get_tps_color(tps)
-                    player.send_message("§e§l[Server Optimizer v2.2.5]")
+                    player.send_message("§e§l[Server Optimizer v2.2.6]")
                     player.send_message(f"§7TPS: {color}{tps:.2f}§7/20.0 §8| §7MSPT: §f{mspt:.1f}ms")
                     chunks = self.get_total_loaded_chunks()
                     player.send_message(f"§7Chunks: §f{chunks} §8| §7Packet Throttle: {'§aON' if self.packet_throttle_enabled else '§cOFF'}")

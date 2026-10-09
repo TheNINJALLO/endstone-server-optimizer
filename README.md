@@ -36,6 +36,7 @@ Server optimization plugin for Endstone Minecraft Bedrock. This release is align
 - Monitors TPS and lag indicators and applies configurable cleanup and load-reduction actions.
 - Controls entity cleanup, packet-related optimizations, safe restart-based view-distance configuration, and automatic thresholds.
 - Announces every automatic entity cleanup to all players at 30 seconds and 5 seconds, reports completion, and protects dropped items for 60 seconds.
+- Shows the detailed bordered readout after hourly and manual full cleanup, with cleared/total counts for items, mobs, arrows, and XP orbs, plus loaded chunks.
 - Provides read-only status commands for players and guarded configuration commands for operators.
 
 ## How to use
@@ -65,20 +66,20 @@ Server optimization plugin for Endstone Minecraft Bedrock. This release is align
 | Endstone API | `0.11` |
 | Bedrock Dedicated Server | `1.26.44` |
 | Python | `>=3.10` |
-| Plugin release | `v2.2.5` |
+| Plugin release | `v2.2.6` |
 
 ## Install
 
 Download the wheel from the matching GitHub release:
 
 ```bash
-gh release download v2.2.5 --repo TheNINJALLO/endstone-server-optimizer --pattern "*.whl"
+gh release download v2.2.6 --repo TheNINJALLO/endstone-server-optimizer --pattern "*.whl"
 ```
 
 Copy the downloaded wheel into the server's `plugins/` directory, remove any older wheel for the same plugin, and restart Endstone.
 
 > [!NOTE]
-> Version 2.2.5 starts cleanup intervals when the plugin is enabled, prevents silent item-spawn cancellation, and gives every automatic cleanup a warning countdown, including emergency lag cleanup. Fresh drops and item frames are protected. It retains the view-distance safety fix from 2.2.4: older configs with `auto_view_distance: true` are migrated to `false`, and `/viewdistance <5-32>` requires a server restart.
+> Version 2.2.6 restores the detailed cleanup readout and retains the item-clearing fixes from 2.2.5: intervals start when the plugin is enabled, dropped-item spawns are preserved, and all automatic cleanup uses a warning countdown. Fresh drops and item frames are protected. It also retains the view-distance safety fix from 2.2.4: older configs with `auto_view_distance: true` are migrated to `false`, and `/viewdistance <5-32>` requires a server restart.
 
 > [!IMPORTANT]
 > Use Endstone `0.11.9` with BDS `1.26.44`. Back up worlds and plugin data before upgrading a production server.
