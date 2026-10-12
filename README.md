@@ -9,10 +9,10 @@
 </p>
 
 <p align="center">
-  <img alt="Endstone 0.11.9" src="https://img.shields.io/badge/Endstone-0.11.9-52b7a8?style=flat-square">
+  <img alt="Endstone 0.11.14" src="https://img.shields.io/badge/Endstone-0.11.14-52b7a8?style=flat-square">
   <img alt="API 0.11" src="https://img.shields.io/badge/API-0.11-63b8ff?style=flat-square">
-  <img alt="BDS 1.26.44" src="https://img.shields.io/badge/BDS-1.26.44-8b7dff?style=flat-square">
-  <img alt="Python >=3.10" src="https://img.shields.io/badge/Python-%3E=3.10-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white">
+  <img alt="BDS 1.26.52.3" src="https://img.shields.io/badge/BDS-1.26.52.3-8b7dff?style=flat-square">
+  <img alt="Python >=3.11" src="https://img.shields.io/badge/Python-%3E=3.11-3776AB?style=flat-square&amp;logo=python&amp;logoColor=white">
 </p>
 
 <p align="center">
@@ -29,7 +29,7 @@
 
 ## Overview
 
-Server optimization plugin for Endstone Minecraft Bedrock. This release is aligned with Endstone 0.11.9 and Minecraft Bedrock Dedicated Server 1.26.44, and is distributed as a Python wheel for direct installation in an Endstone server.
+Server optimization plugin for Endstone Minecraft Bedrock. This release is aligned with Endstone 0.11.14 and Minecraft Bedrock Dedicated Server 1.26.52.3, and is distributed as a Python wheel for direct installation in an Endstone server.
 
 ## What it does
 
@@ -62,10 +62,10 @@ Server optimization plugin for Endstone Minecraft Bedrock. This release is align
 
 | Component | Supported version |
 |---|---|
-| Endstone | `0.11.9` |
+| Endstone | `0.11.14` |
 | Endstone API | `0.11` |
-| Bedrock Dedicated Server | `1.26.44` |
-| Python | `>=3.10` |
+| Bedrock Dedicated Server | `1.26.52.3` |
+| Python | `>=3.11` |
 | Plugin release | `v2.2.6` |
 
 ## Install
@@ -82,7 +82,7 @@ Copy the downloaded wheel into the server's `plugins/` directory, remove any old
 > Version 2.2.6 restores the detailed cleanup readout and retains the item-clearing fixes from 2.2.5: intervals start when the plugin is enabled, dropped-item spawns are preserved, and all automatic cleanup uses a warning countdown. Fresh drops and item frames are protected. It also retains the view-distance safety fix from 2.2.4: older configs with `auto_view_distance: true` are migrated to `false`, and `/viewdistance <5-32>` requires a server restart.
 
 > [!IMPORTANT]
-> Use Endstone `0.11.9` with BDS `1.26.44`. Back up worlds and plugin data before upgrading a production server.
+> Use Endstone `0.11.14` with BDS `1.26.52.3`. Back up worlds and plugin data before upgrading a production server.
 
 ## Configuration and secrets
 
