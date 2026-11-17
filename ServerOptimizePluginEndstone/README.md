@@ -1,3 +1,5 @@
+> Compatibility update **2.2.7** targets **Endstone 0.11.16 / BDS 1.26.65.1**, protocol **2225**, Python **3.11+**. API level remains **0.11**. Keep configuration and player data when replacing the wheel. Earlier acceptance records below describe their original builds; current qualification is tracked in the workspace upgrade report.
+
 -----
 
 # ServerOptimizerPlugin (for Endstone/Bedrock) 🚀

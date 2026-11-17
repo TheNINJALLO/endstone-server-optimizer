@@ -1,3 +1,5 @@
+[Download compatibility release v2.2.7](https://github.com/TheNINJALLO/endstone-server-optimizer/releases/tag/v2.2.7).
+
 <!-- endstone-professional-header:start -->
 <p align="center">
   <img src="docs/assets/banner.svg" width="100%" alt="Endstone Server Optimizer &mdash; Server optimization plugin for Endstone Minecraft Bedrock">
@@ -73,13 +75,13 @@ Server optimization plugin for Endstone Minecraft Bedrock. This release is align
 Download the wheel from the matching GitHub release:
 
 ```bash
-gh release download v2.2.6 --repo TheNINJALLO/endstone-server-optimizer --pattern "*.whl"
+gh release download v2.2.7 --repo TheNINJALLO/endstone-server-optimizer --pattern "*.whl"
 ```
 
 Copy the downloaded wheel into the server's `plugins/` directory, remove any older wheel for the same plugin, and restart Endstone.
 
 > [!NOTE]
-> Version 2.2.6 restores the detailed cleanup readout and retains the item-clearing fixes from 2.2.5: intervals start when the plugin is enabled, dropped-item spawns are preserved, and all automatic cleanup uses a warning countdown. Fresh drops and item frames are protected. It also retains the view-distance safety fix from 2.2.4: older configs with `auto_view_distance: true` are migrated to `false`, and `/viewdistance <5-32>` requires a server restart.
+> Version 2.2.7 restores the detailed cleanup readout and retains the item-clearing fixes from 2.2.5: intervals start when the plugin is enabled, dropped-item spawns are preserved, and all automatic cleanup uses a warning countdown. Fresh drops and item frames are protected. It also retains the view-distance safety fix from 2.2.4: older configs with `auto_view_distance: true` are migrated to `false`, and `/viewdistance <5-32>` requires a server restart.
 
 > [!IMPORTANT]
 > Use Endstone `0.11.14` with BDS `1.26.52.3`. Back up worlds and plugin data before upgrading a production server.
